@@ -1,0 +1,436 @@
+---
+title: 'homework iii'
+author: 'Nirbhay Pherwani, Dhiren Chandnani'
+date: '2019-09-24'
+output:
+    pdf_document:
+    latex_engine: xelatex
+header-includes:
+  \usepackage{booktabs}
+---
+
+```{r echo=FALSE}
+# This chunk is just to make it possible to shrink the typeface in succeeding chunks. Mainly this will be used for the crosstabs.
+def.chunk.hook  <- knitr::knit_hooks$get("chunk")
+knitr::knit_hooks$set(chunk = function(x, options) {
+  x <- def.chunk.hook(x, options)
+  ifelse(options$size != "normalsize", paste0("\\", options$size,"\n\n", x, "\n\n \\normalsize"), x)
+})
+```
+
+
+# Introduction
+We have worked on four scenarios to get some insights on the different fields and how they are related. Fields we worked on include Complaint.Type, Location.Type, Status, Borough, Agency. We used google maps, cross tabs and bar plots to answer raised questions. 
+
+# Initialization
+Here we load the tidyverse packages and the `data.table` package and load the nyc311 data set. Then we fix the column names of the nyc311 data so that they have no spaces.
+
+```{r initialize}
+library(tidyverse)
+library(data.table)
+nyc311<-fread("311_Service_Requests_from_2010_to_Present.csv")
+names(nyc311)<-names(nyc311) %>%
+  stringr::str_replace_all("\\s", ".")
+mini311<-nyc311[sample(nrow(nyc311),10000),]
+write.csv(mini311,"mini311.csv")
+```
+
+## Reading the Sampled Data
+```{r readmini}
+sample<-fread("mini311.csv")
+```
+
+# Data Exploration
+
+## I. Noise Complaints
+In this section we are trying to display all the noise complaints in New York and explore them more categorically.
+
+### Selecting all noise complaints out of the sampled data  
+```{r all_noise_complaints}
+complaintLocations <- sample %>%
+  select(Complaint.Type,
+    Longitude,
+    Latitude
+  )
+noiseComplaintLocations <- complaintLocations %>%
+  filter(str_detect(Complaint.Type,"Noise"))
+```
+
+### Plotting the noise complaints on a map
+```{r noise_complaints_map}
+library(ggmap)
+library(curl)
+key <- "AIzaSyClTqcMNpFm9_rFaaXH6ptzDpmTmAEwml4"
+register_google(key=key)
+nyc_map <- get_map(location=c(lon=-73.9,lat=40.75),
+		   maptype="terrain",zoom=10)
+map <- ggmap(nyc_map) +
+  geom_point(data=noiseComplaintLocations,aes(x=Longitude,y=Latitude),
+	     size=0.8,color="red") +
+  ggtitle("Noise Complaints in Sampled Data") +
+  theme(plot.title=element_text(hjust=0.5)) +
+  xlab("Longitude") + ylab("Latitude")
+map
+```
+
+### What are the different noise complaints and which has the highest count after general noise complaints?
+```{r noise_complaint_types_bar_chart}
+noiseComplaintData<-noiseComplaintLocations %>%
+  group_by(Complaint.Type) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(Complaint.Type = reorder(Complaint.Type,Count))
+
+ggplot(data=noiseComplaintData, aes(x = Complaint.Type,y = Count, color = Complaint.Type)) +
+    xlab("Complaint Type") + ylab("Count") +
+    geom_bar(stat='identity') +
+    ggtitle("Noise Complaint Types") +
+    coord_flip()
+```
+As we can see, Noise - Commercial is the category with second highest number of noise complaints. Next, we will see the distribution for commercial noise complaints. 
+
+### Commercial-Noise complaints
+```{r commercial_noise_complaint_distribution_bar_chart}
+require(dplyr)
+complaintLocationsData <- sample %>%
+  dplyr::select(Location.Type, 
+         Complaint.Type,
+         Longitude,
+         Latitude)
+
+commercialNoiseData <- complaintLocationsData %>%
+  filter(complaintLocationsData$Complaint.Type == "Noise - Commercial") 
+
+commercialNoiseCounts <- commercialNoiseData %>%
+  group_by(Location.Type) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(Location.Type = reorder(Location.Type,Count))
+
+ggplot(data=commercialNoiseCounts, aes(x = Location.Type,y = Count)) +
+    xlab("Location Type") + ylab("Count") +
+    geom_bar(stat='identity', fill="purple") +
+    ggtitle("Noise Commercial Complaint Types") +
+    coord_flip()
+```
+As we can see, Clubs/Bars/Restaurants contribute to the most number of commercial noise complaints. Lets see what it looks like on a map.
+
+### Selecting Commercial-Noise complaints by Clubs/Bars/Restaurants (Location Type) out of the sampled data 
+```{r clubs_bars_restaurants_noise_complaints}
+cBRLocs <- commercialNoiseData %>%
+  filter(Location.Type=="Club/Bar/Restaurant")
+
+cBRLocs<- cBRLocs %>%
+  select(Location.Type,
+    Longitude,
+    Latitude
+)
+```
+
+### Plotting the Clubs/Bars/Restaurants noise complaints on a map
+```{r clubs/bars/restaurants noise complaints map}
+library(ggmap)
+library(curl)
+key <- "AIzaSyClTqcMNpFm9_rFaaXH6ptzDpmTmAEwml4"
+register_google(key=key)
+nyc_map <- get_map(location=c(lon=-73.9,lat=40.75),
+		   maptype="roadmap",zoom=10)
+map <- ggmap(nyc_map) +
+  geom_point(data=cBRLocs,aes(x=Longitude,y=Latitude),
+	     size=0.8,color="purple") +
+  ggtitle("Noise Complaints for Clubs/Bars/Restaurants") +
+  theme(plot.title=element_text(hjust=0.5)) +
+  xlab("Longitude") + ylab("Latitude")
+map
+```
+
+
+##  II. Heating Complaints
+In this section, we will be exploring the heating complaints in New York, categorized by Borough.
+
+### Selecting all the heating complaints by Borough
+```{r heating_complaints_by_boroughs}
+heatingLocations <- sample %>%
+  select(Borough, Complaint.Type,
+    Longitude,
+    Latitude, 
+    Status
+  )
+heatingLocationsFiltered <- heatingLocations %>%
+  filter(heatingLocations$Complaint.Type == "HEATING")
+
+boroughHeatingLocations<- heatingLocationsFiltered %>%
+  select(Borough,
+    Longitude,
+    Latitude
+)
+```
+
+### Lets see the how heatings complaints look on the map when plotted borough-wise
+```{r heating complaints by boroughs map}
+library(ggmap)
+library(curl)
+key <- "AIzaSyClTqcMNpFm9_rFaaXH6ptzDpmTmAEwml4"
+register_google(key=key)
+nyc_map <- get_map(location=c(lon=-73.9,lat=40.75),
+		   maptype="roadmap",zoom=10)
+map <- ggmap(nyc_map) +
+  geom_point(data=boroughHeatingLocations,aes(x=Longitude,y=Latitude, color=Borough),
+	     size=0.8) +
+  ggtitle("Heating Complaints By Boroughs") +
+  theme(plot.title=element_text(hjust=0.5)) +
+  xlab("Longitude") + ylab("Latitude")
+map
+```
+
+### Which known borough has the highest number of Heating complaints ?
+```{r heating_complaints_by_boroughs_bar_chart}
+heatingBoroughCounts<-sample %>%
+  filter(Complaint.Type=="HEATING") %>%
+  group_by(Borough) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(Borough = reorder(Borough,Count))
+
+ggplot(data=heatingBoroughCounts, aes(x = Borough,y = Count)) +
+  xlab("Borough") + ylab("Count") +
+    geom_bar(stat='identity', fill="green3") +
+    ggtitle("Borough-wise distribution for heating complaints") +
+    coord_flip()
+```
+Looking at the bar chart, Brooklyn seems to be the known location having the most number of heating complaints.
+
+### Let's see how the status wise distribution looks for these boroughs
+```{r crosstabs_heating_borough_status, size='footnotesize'}
+xtabA<-dplyr::filter(heatingLocationsFiltered)
+xtabB<-select(xtabA,Borough,"Status")
+library(gmodels)
+CrossTable(xtabB$Borough,xtabB$'Status')
+```
+
+Again, we can see that Brooklyn has the max number of heating complaints, so lets see the status wise map plot of Brooklyn's heating complaints.
+
+### Status wise brooklyn heating complaints
+```{r heating_complaints_status_in_brooklyn}
+heatingStatusLocations <- heatingLocationsFiltered %>%
+  select(Borough, Status,
+    Longitude,
+    Latitude
+  )
+heatingStatusLocationsFiltered <- heatingStatusLocations %>%
+  filter(heatingStatusLocations$Borough == "BROOKLYN")
+
+brooklynHeatingStatus<- heatingStatusLocationsFiltered %>%
+  select(Status,
+    Longitude,
+    Latitude
+)
+```
+
+### Map plots for the complaints
+```{r heating_complaints_status_in_brooklyn_map}
+library(ggmap)
+library(curl)
+key <- "AIzaSyClTqcMNpFm9_rFaaXH6ptzDpmTmAEwml4"
+register_google(key=key)
+nyc_map <- get_map(location="flatbush",
+		   maptype="roadmap",zoom=12)
+map <- ggmap(nyc_map) +
+  geom_point(data=brooklynHeatingStatus,aes(x=Longitude,y=Latitude, color=Status),
+	     size=0.8) +
+  ggtitle("Complaints Status in Brooklyn") +
+  theme(plot.title=element_text(hjust=0.5)) +
+  xlab("Longitude") + ylab("Latitude")
+map
+```
+Most of the heating complaints seem to be closed in Brooklyn.
+
+## III. A look at the Agency field
+
+### Which agency has the highest number of complaints reported?
+```{r agency_complaints_reported_status, size='footnotesize'}
+xtabA<-dplyr::filter(sample)
+xtabB<-select(xtabA,Agency,"Status")
+library(gmodels)
+CrossTable(xtabB$Agency,xtabB$'Status')
+```
+HPD clearly stands out for the maximum number of complaints being reported. 
+
+Let's see how HPD is performing on the reported complaints.
+
+### Bar chart for HPD's status-wise distribution
+```{r HPD_status_bar_chart}
+hpdStatusCounts<-sample %>%
+  filter(Agency=="HPD",
+  Status=='Closed' |
+  Status=='Open') %>%
+  group_by(Status) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(Status = reorder(Status,Count))
+ggplot(data=hpdStatusCounts, aes(x = Status,y = Count)) +
+  ggtitle("HPD's status wise distribution") +
+  xlab("Status") + ylab("Count") +
+    geom_bar(stat='identity', fill="blue2") +
+    coord_flip()
+```
+A major chunk of the complaints are closed, which shows they are doing a good job!
+
+Let's go ahead and plot complaints reported to HPD on a map. 
+
+### Selecting agency HPD's status wise location data
+```{r HPD_locs_status_wise_distribution}
+hpdStatusLocations <- sample %>%
+  select(Agency, Status,
+    Longitude,
+    Latitude
+  )
+hpdStatusLocationsFiltered <- hpdStatusLocations %>%
+  filter(hpdStatusLocations$Agency == "HPD",
+  Status=='Closed' |
+  Status=='Open')
+
+hpdStatusLocationsFiltered<- hpdStatusLocationsFiltered %>%
+  select(Status,
+    Longitude,
+    Latitude
+)
+```
+
+### Plotting agency HPD's status wise location data on a map
+```{r HPD_locs_status_wise_distribution_map}
+library(ggmap)
+library(curl)
+key <- "AIzaSyClTqcMNpFm9_rFaaXH6ptzDpmTmAEwml4"
+register_google(key=key)
+nyc_map <- get_map(location="New York City",
+		   maptype="roadmap",zoom=10)
+map <- ggmap(nyc_map) +
+  geom_point(data=hpdStatusLocationsFiltered,aes(x=Longitude,y=Latitude, color=Status),
+	     size=0.8) +
+  ggtitle("Complaints Status for HPD Agency") +
+  theme(plot.title=element_text(hjust=0.5)) +
+  xlab("Longitude") + ylab("Latitude")
+map
+```
+
+## IV. NYC 311 complaints trend 
+
+### 
+
+### Which month has the maximum number of complaints being reported?
+```{r trend}
+library(lubridate)
+trend<-sample %>%
+  mutate(month = month.abb[month(mdy_hms(Created.Date))]) %>%
+  filter(!is.na(month)) %>%
+  group_by(month) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(month = reorder(month,Count))
+  
+ggplot(data=trend, aes(x = month,y = Count)) +
+  xlab("Month") + ylab("Count") +
+    ggtitle("Month wise complaint distribution") +
+    geom_bar(stat='identity', fill="orange") +
+    coord_flip()
+```
+
+We can clearly see that January has the highest number of complaints getting reported.
+
+Let's see January's complaints plotted on a map borough wise. 
+
+### Map plot for complaints by borough in January
+```{r Selection_january_month_distribution_borough_wise}
+janBoroughLocations <- sample %>%
+  select(Created.Date, Borough,
+    Longitude,
+    Latitude
+  ) %>%
+  mutate(month = month.abb[month(mdy_hms(Created.Date))]) %>%
+  filter(!is.na(month), month=='Jan')
+
+janBoroughLocations<- janBoroughLocations %>%
+  select(Borough,
+    Longitude,
+    Latitude
+)
+```
+
+```{r January_month_distribution_borough_wise_map}
+library(ggmap)
+library(curl)
+key <- "AIzaSyClTqcMNpFm9_rFaaXH6ptzDpmTmAEwml4"
+register_google(key=key)
+nyc_map <- get_map(location="New York City",
+		   maptype="roadmap",zoom=10)
+map <- ggmap(nyc_map) +
+  geom_point(data=janBoroughLocations,aes(x=Longitude,y=Latitude, color=Borough),
+	     size=0.8) +
+  ggtitle("Borough-wise Distribution for Complaints in January") +
+  theme(plot.title=element_text(hjust=0.5)) +
+  xlab("Longitude") + ylab("Latitude")
+map
+```
+
+Let's see which borough is having the highest complaints being reported in January. 
+
+### Bar chart for complaints by borough in January  
+```{r January_month_distribution_borough_wise}
+janBoroughCounts<- sample %>%
+  mutate(month = month.abb[month(mdy_hms(Created.Date))]) %>%
+  filter(!is.na(month), month=='Jan') %>%
+  group_by(Borough) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(Borough = reorder(Borough,Count))
+ggplot(data=janBoroughCounts, aes(x = Borough,y = Count)) +
+  ggtitle("Complaints by Borough in January") +
+  xlab("Borough") + ylab("Count") +
+    geom_bar(stat='identity', fill="red") +
+    coord_flip()
+```
+
+So we can see that Brooklyn has the maximum number of complaints reported in January.
+
+Lets plot Brooklyn's complaints (January) on a map
+
+### Selecting complaints - Brooklyn/January
+```{r selection_january_month_brooklyn}
+janBrooklynLocations <- sample %>%
+  select(Created.Date, Borough,
+    Longitude,
+    Latitude
+  ) %>%
+  mutate(month = month.abb[month(mdy_hms(Created.Date))]) %>%
+  filter(!is.na(month), month=='Jan', Borough=="BROOKLYN")
+
+janBrooklynLocations<- janBrooklynLocations %>%
+  select(Borough,
+    Longitude,
+    Latitude
+)
+```
+
+### Plotting complaints - Brooklyn/January
+```{r january_month_brooklyn_map}
+library(ggmap)
+library(curl)
+key <- "AIzaSyClTqcMNpFm9_rFaaXH6ptzDpmTmAEwml4"
+register_google(key=key)
+nyc_map <- get_map(location="Flatbush",
+		   maptype="roadmap",zoom=12)
+map <- ggmap(nyc_map) +
+  geom_point(data=janBrooklynLocations,aes(x=Longitude,y=Latitude, color=Borough),
+	     size=0.8) +
+  ggtitle("Brooklyn Complaints in January") +
+  theme(plot.title=element_text(hjust=0.5)) +
+  xlab("Longitude") + ylab("Latitude")
+map
+```

@@ -1,0 +1,753 @@
+---
+title: 'homework vi'
+author: 'Nirbhay Pherwani, Dhiren Chandnani'
+date: '2019-10-11'
+output:
+    pdf_document:
+    latex_engine: xelatex
+header-includes:
+  \usepackage{booktabs}
+---
+
+```{r echo=FALSE}
+# This chunk is just to make it possible to shrink the typeface in succeeding chunks. Mainly this will be used for the crosstabs.
+def.chunk.hook <- knitr::knit_hooks$get("chunk")
+knitr::knit_hooks$set(chunk = function(x, options) {
+  x <- def.chunk.hook(x, options)
+  ifelse(options$size != "normalsize", paste0("\\", options$size,"\n\n", x, "\n\n \\normalsize"), x)
+})
+```
+
+# Part A : Cleaning NYC Data
+
+Summary of what we did here - We observed that there were 243 unique complaint types. A lot of complaints had just 1 or 2 instances. So for analysis only major complaints would be required. Hence, only complaints with counts greater than 60 are selected to maintain relevancy. Complaint types had unwanted characters and also were not in a formatted manner. So we made it all upper case and replaced those characters. We observed that there were 138 unique Location types. A lot of locations had just 1 or 2 instances. So for analysis only major locations would be required. Hence, only locations with counts greater than 10 are selected to maintain relevancy. We observed that there were 64 unique Agency types. A lot of Agencies had just 1 or 2 instances. So for analysis only major agencies would be required. Hence, only agencies with counts greater than 10 are selected to maintain relevancy. The zipcodes were not in a correct 5-digit format. We used the zipcode package to clean the zip codes. We also replaced all missing values with NA. 
+
+```{r nyc311DataCleaning}
+library(tidyverse)
+library(data.table)
+nyc311<-fread("311_Service_Requests_from_2010_to_Present.csv")
+names(nyc311)<-names(nyc311) %>%
+  stringr::str_replace_all("\\s", ".")
+
+# removing unwanted columns
+nyc311 <- subset(nyc311, select= -c(Landmark, Park.Borough, School.City, School.State, School.Zip, Taxi.Company.Borough))
+
+# removing complaints with count < 60
+nyc311<-nyc311 %>%
+  group_by(Complaint.Type) %>%
+  filter(n() >= 60)
+
+# making complaint values uppercase
+library(dplyr)
+nyc311$Complaint.Type <- toupper(nyc311$Complaint.Type)
+nyc311$Complaint.Type <- gsub('/', ' ', nyc311$Complaint.Type)
+nyc311$Complaint.Type <- gsub('-', ' ', nyc311$Complaint.Type)
+
+# removing location types with count < 10
+nyc311<-nyc311 %>%
+  group_by(Location.Type) %>%
+  filter(n() >= 10)
+
+# removing agencies with count < 10
+nyc311<-nyc311 %>%
+  group_by(Agency) %>%
+  filter(n() >= 10)
+
+# splitting the community board field
+nyc311<-nyc311 %>% separate(Community.Board, c("Community.Code"), sep=" ", extra = "drop")
+
+# splitting incident address
+nyc311<-nyc311 %>% separate(Incident.Address, c("Incident.Code"), sep=" ",extra = "drop")
+
+# cleaning zipcodes
+library(zipcode)
+nyc311$Incident.Zip<-clean.zipcodes(nyc311$Incident.Zip)
+
+# changing case for city
+nyc311$City <- toupper(nyc311$City)
+
+# replacing missing values with NA
+nyc311 <- nyc311 %>% mutate_at(vars(-group_cols()),na_if,"N/A")
+nyc311 <- nyc311 %>% mutate_at(vars(-group_cols()),na_if,"")
+nyc311 <- nyc311 %>% mutate_at(vars(-group_cols()),na_if," ")
+nyc311 <- nyc311 %>% mutate_at(vars(-group_cols()),na_if,"N / A")
+
+nyc311_backup <- nyc311
+```
+
+
+# Part B : Exploration of NYC 311 Data
+
+## Exploring the Agency Field
+
+### Busiest Agencies
+
+The following plot shows the distribution of the service requests in various agencies. It can be seen that HPD (Department of Housing Preservation and Development) receives the most service calls followed by the DOT (Department of Transportation).
+```{r busiestAgencies}
+busyAgencies <- nyc311 %>%
+   group_by(Agency) %>%
+   summarize(Count=n()) %>%
+   top_n(n=5, wt = Count)
+
+busyAgencies$Agency<-factor(busyAgencies$Agency,
+   levels=busyAgencies$Agency[order(busyAgencies$Count, decreasing = TRUE)])
+
+library(scales)
+busiestAgenciesPlot<-ggplot(busyAgencies,aes(x=Agency,y=Count))+
+  geom_bar(stat="identity", fill = "#039BE5") +
+  scale_y_continuous(labels = comma) +
+labs(title = "Busiest Agencies", x = "Agencies", y = "Number of Complaints") +
+geom_text(aes(label = paste(floor(Count/1000), "K", sep = "")), vjust = 1.4, color = "White") +
+theme_minimal() +
+theme(plot.title = element_text(hjust = 0.5))
+busiestAgenciesPlot
+```
+
+### Status of agencies
+HPD clearly stands out for the maximum number of complaints being reported. 
+
+```{r agencyStatus, size='footnotesize'}
+statusTab<-dplyr::filter(nyc311,
+   Status=='Closed' |
+   Status=='Open' |
+   Status=='Assigned' |
+   Status=='Pending'
+)
+agencyStatusTab<-select(statusTab,Agency,"Status")
+library(gmodels)
+CrossTable(agencyStatusTab$Agency,agencyStatusTab$'Status')
+```
+
+### Which agency is taking care of complaints expeditiously?  
+Lets see the performance of these agencies for the complaints they have closed. 
+
+```{r performanceAgency}
+library(lubridate)
+# Filter closed status agency
+agencyFilter <- nyc311 %>%
+  select(Agency, Status, Created.Date, Closed.Date, Unique.Key) %>%
+  filter(Status == "Closed")
+
+# Calulate duration in days
+agencyFilter$durations<-mdy_hms(agencyFilter$Closed.Date)-mdy_hms(agencyFilter$Created.Date)
+agencyFilter$durations<-round(as.numeric(agencyFilter$durations,units='days'),2)
+
+# Categorise duration
+agencyDurations <- agencyFilter %>%
+    filter(durations>=0, Agency == "HPD"| Agency == "DOT" | Agency == "NYPD" | Agency == "DEP" | Agency == "DSNY") %>%
+    mutate(Duration.Category = case_when(
+                                  durations<=1 ~ 'Inside One Day',
+                                  durations <= 7 ~ 'Within One Week',
+                                  durations > 7 ~ 'More than a Week',
+                                  ))
+
+# Spreading duration
+agencyDurationsBackup <- agencyDurations
+agencyDurations$durationsCount <- rep(1, nrow(agencyDurations))
+agencyDurations <- agencyDurations %>% spread(Duration.Category, durationsCount)
+
+agencyDurations$`Inside One Day`[is.na(agencyDurations$`Inside One Day`)] <- 0
+agencyDurations$`Within One Week`[is.na(agencyDurations$`Within One Week`)] <- 0
+agencyDurations$`More than a Week`[is.na(agencyDurations$`More than a Week`)] <- 0
+
+# Getting count of each duration category
+library("dplyr")
+agency_data <- agencyDurations %>%
+  select(Agency, `Inside One Day`, `Within One Week`, `More than a Week`) %>%
+   group_by(Agency) %>%
+   dplyr::summarise(
+      OneDayCount = sum(`Inside One Day`),
+      OneWeekCount = sum(`Within One Week`),
+      MoreOneWeekCount = sum(`More than a Week`)
+)
+
+# Chart
+meltedAgencyPerformance <- melt(agency_data, "Agency")
+
+colnames(meltedAgencyPerformance)[colnames(meltedAgencyPerformance)=="variable"] <- "Category of Duration"
+colnames(meltedAgencyPerformance)[colnames(meltedAgencyPerformance)=="value"] <- "Number of Closed Complaints"
+
+agencyPerfomancePlot<-ggplot(meltedAgencyPerformance, aes(x = Agency, y = `Number of Closed Complaints`, fill = `Category of Duration`)) +
+  labs(title = "Performance of Top Agencies") +
+  geom_bar(stat = 'identity', position = 'stack') + 
+  geom_text(aes(label = paste(floor(`Number of Closed Complaints`/1000), "K", sep = "")), size = 3, vjust=0.5, position = position_stack(vjust = 0.5)) +
+  scale_fill_discrete(labels = c("Within a Day", "Within a week", "More than a Week")) +
+  scale_y_continuous(labels = comma) +
+  theme_minimal() + 
+  theme(axis.ticks.x = element_blank(), plot.title = element_text(hjust = 0.5))
+agencyPerfomancePlot
+```
+
+The above graph clearly shows that NYPD closes the most complaints within a day. They seem to be the best performing agency, at the same time HPD seems to be having too much workload, and is performing better than average, we could say.
+
+
+## Complaint Types & Boroughs
+
+### Complaints by Boroughs
+The below graph talks about the Borough with most complaints. Brooklyn has the highest number of complaints followed by Queens.
+
+```{r boroughComplaints}
+boroughComplaints <- nyc311 %>%
+   group_by(Borough) %>%
+   summarize(Count=n())
+
+boroughComplaintsPlot<-ggplot(boroughComplaints,aes(x=reorder(Borough, Count),y=Count)) +
+   geom_bar(stat="identity", fill = "#3E64FF") +
+   scale_y_continuous(labels = comma) +
+   labs(title = "Complaints by Borough", x = "Borough Names", y = "Number of Complaints") +
+   geom_text(aes(label = paste(floor(Count/1000), "K", sep = "")), hjust = 1.4, color = "White") +
+     theme_minimal() +
+     theme(plot.title = element_text(hjust = 0.5)) +
+     coord_flip()
+boroughComplaintsPlot
+```
+
+### Most common complaints
+The below graph gives us a crucial information about the common types of complaint. It shows that the highest count of complaints recieved is regarding the heating problem.
+
+```{r mostCommonComplaints}
+mostCommonComplaints <- nyc311 %>%
+   group_by(Complaint.Type) %>%
+   summarize(Count=n()) %>%
+   top_n(n=10, wt = Count)
+
+mostCommonComplaints$Complaint.Type<-factor(mostCommonComplaints$Complaint.Type,
+   levels=mostCommonComplaints$Complaint.Type[order(mostCommonComplaints$Count)])
+
+mostCommonComplaintsPlot<-ggplot(mostCommonComplaints,aes(x=Complaint.Type,y=Count)) +
+    geom_bar(stat="identity", fill = "#C32026") +
+    scale_y_continuous(labels = comma) +
+    labs(title = "Most Common Complaints", x = "Complaint Types", y = "Number of Complaints") +
+    geom_text(aes(label = paste(floor(Count/1000), "K", sep = "")), hjust = 1.4, color = "White") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    coord_flip()
+mostCommonComplaintsPlot
+```
+
+### Selecting all the heating complaints by Borough
+It can be seen that Heating complaints prevail in the Bronx Borough.
+
+```{r heatingComplaintsByBoroughsBarChart}
+heatingBoroughCounts<-nyc311 %>%
+  filter(Complaint.Type=="HEATING", Borough != "Unspecified") %>%
+  group_by(Borough) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(Borough = reorder(Borough,Count))
+
+ggplot(data=heatingBoroughCounts, aes(x = Borough,y = Count)) +
+  geom_bar(stat="identity", fill = "#3E64FF") +
+   scale_y_continuous(labels = comma) +
+   labs(title = "Heating Complaints by Borough", x = "Borough Names", y = "Number of Complaints") +
+   geom_text(aes(label = Count), hjust = 1.4, color = "White") +
+     theme_minimal() +
+     theme(plot.title = element_text(hjust = 0.5)) +
+     coord_flip()
+```
+
+## Exploring the Noise Complaints in NYC311
+In this section we are trying to display all the noise complaints in New York and explore them more categorically.
+
+### What are the different noise complaints and which has the highest count after general noise complaints?  
+```{r allNoiseComplaints}
+noiseComplaintLocations <- nyc311 %>%
+  select(Complaint.Type,
+    Longitude,
+    Latitude,
+    Agency
+  ) %>%
+  filter(str_detect(Complaint.Type,"NOISE"), Complaint.Type != "NOISE")
+
+noiseComplaintData<-noiseComplaintLocations %>%
+  group_by(Complaint.Type) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(Complaint.Type = reorder(Complaint.Type,Count))
+
+ggplot(data=noiseComplaintData, aes(x = Complaint.Type,y = Count, fill = Complaint.Type)) +
+   geom_bar(stat="identity") +
+   scale_y_continuous(labels = comma) +
+   labs(title = "Noise Complaint Types", x = "Complaint Types", y = "Number of Complaints") +
+   #geom_text(aes(label = Count), hjust = 1.4, color = "White") +
+   theme_minimal() +
+   theme(plot.title = element_text(hjust = 0.5)) +
+   coord_flip()
+```
+As we can see, Noise - Commercial is the category with second highest number of noise complaints. Next, we will see the distribution for commercial noise complaints. 
+
+### Commercial-Noise complaints
+```{r commercialNoiseComplaintDistribution}
+require(dplyr)
+commercialNoiseLocationsData <- nyc311 %>%
+  dplyr::select(Location.Type, 
+         Complaint.Type,
+         Longitude,
+         Latitude,
+         Agency) %>%
+  dplyr::filter(str_detect(Complaint.Type,"COMMERCIAL"))
+
+commercialNoiseCounts <- commercialNoiseLocationsData %>%
+  group_by(Location.Type) %>%
+  summarise(Count = n()) %>%
+  filter(!is.na(Location.Type))
+  
+ggplot(data=commercialNoiseCounts, aes(x = Location.Type,y = Count, fill = Location.Type)) +
+   geom_bar(stat="identity") +
+   scale_y_continuous(labels = comma) +
+   labs(title = "Commercial Noise Complaint Types", x = "Location Types", y = "Number of Complaints", fill = "Location Type") +
+   geom_text(aes(label = Count), vjust = 2.0, color = "White") +
+   theme_minimal() +
+   theme(plot.title = element_text(hjust = 0.5))
+```
+
+As we can see, Clubs/Bars/Restaurants contribute to the most number of commercial noise complaints. Lets see what it looks like on a map.
+
+## Trend of 311 calls
+This is one of the most important graphs of this analysis. It shows the trend of 311 calls across various months. As you can see, January and March are the top 2 busiest months of service request.
+
+```{r trend}
+library(lubridate)
+trendPlot<-nyc311 %>%
+   mutate(Month = month.abb[month(mdy_hms(Created.Date))]) %>%
+   filter(!is.na(Month)) %>%
+   group_by(Month) %>%
+   summarise(Count = n()) %>%
+   ggplot(aes(x = Month,y = Count, group=1)) +
+   geom_line(color = "#F45905", size = 1.3) +
+   geom_point(color = "#2A1A5E") +
+   theme_bw() +
+   scale_x_discrete(limits = month.abb) +
+   scale_y_continuous(labels = comma) +
+   labs(title = "Trend of 311 calls", x = "Month", y = "Number of Complaints") +
+   theme(plot.title = element_text(hjust = 0.5))
+trendPlot
+```
+
+We can clearly see that January has the highest number of complaints getting reported.
+
+Let's see January's complaints borough wise.
+
+### Plotting complaints by borough in January
+```{r januaryBoroughComplaints}
+janBoroughCounts<- nyc311 %>%
+  mutate(month = month.abb[month(mdy_hms(Created.Date))]) %>%
+  filter(!is.na(month), month=='Jan', Borough != "Unspecified") %>%
+  group_by(Borough) %>%
+  dplyr::summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(Borough = reorder(Borough,Count))
+
+
+ggplot(data=janBoroughCounts, aes(x = Borough,y = Count)) +
+  geom_bar(stat="identity", fill = "#6D0C74") +
+   scale_y_continuous(labels = comma) +
+   labs(title = "Complaints by Borough in January", x = "Borough Names", y = "Number of Complaints") +
+   geom_text(aes(label = paste(floor(Count/1000), "K", sep = "")), hjust = 1.4, color = "White") +
+     theme_minimal() +
+     theme(plot.title = element_text(hjust = 0.5)) +
+     coord_flip()
+
+```
+
+As you can see, Brooklyn has the most number of complaints reported in January. Lets take a proportional sample to see it on a map.
+
+### Stratified Sampling
+```{r sampleJanuaryBoroughComplaints}
+library("splitstackshape")
+sampleJanBoroughComplaints<-splitstackshape::stratified(nyc311, "Borough", 0.001, select = list(Borough = c("BRONX", "BROOKLYN", "MANHATTAN", "QUEENS", "STATEN ISLAND")))
+
+sampleJanBoroughCounts<- sampleJanBoroughComplaints %>%
+  mutate(month = month.abb[month(mdy_hms(Created.Date))]) %>%
+  filter(!is.na(month), month=='Jan', Borough != "Unspecified") %>%
+  group_by(Borough) %>%
+  dplyr::summarise(Count = n())
+
+ggplot(data=sampleJanBoroughCounts, aes(x = Borough,y = Count, fill = Borough)) +
+  geom_bar(stat="identity") +
+   scale_y_continuous(labels = comma) +
+   labs(title = "Complaints by Borough in January (Proportional Sample)", x = "Borough Names", y = "Number of Complaints") +
+   geom_text(aes(label = Count), hjust = 1.4, color = "White") +
+     theme_minimal() +
+     theme(plot.title = element_text(hjust = 0.5)) +
+     coord_flip()
+```
+
+The above graph shows that the sampling performed was proportionate to the actual data. So we can now go ahead and see the distribution on the map.
+
+### Plotting complaints - Borough/January/Sampled
+```{r sampleJanuaryBoroughComplaintsMapPlot}
+sampleJanBoroughLocations <- sampleJanBoroughComplaints %>%
+  select(Created.Date, Borough,
+    Longitude,
+    Latitude
+  ) %>%
+  mutate(month = month.abb[month(mdy_hms(Created.Date))]) %>%
+  filter(!is.na(month), month=='Jan', !is.na(Latitude), Latitude < 42)
+
+sampleJanBoroughLocations<- sampleJanBoroughLocations %>%
+  select(Borough,
+    Longitude,
+    Latitude
+)
+
+library(ggmap)
+library(curl)
+key <- "AIzaSyClTqcMNpFm9_rFaaXH6ptzDpmTmAEwml4"
+register_google(key=key)
+nyc_map <- get_map(location="New York City",
+		   maptype="roadmap",zoom=10)
+map <- ggmap(nyc_map) +
+  geom_point(data=sampleJanBoroughLocations,aes(x=Longitude,y=Latitude, color=Borough),
+	     size=0.8) +
+  ggtitle("Borough Complaints in January (Proportional Sample)") +
+  theme(plot.title=element_text(hjust=0.5)) +
+  xlab("Longitude") + ylab("Latitude")
+map
+```
+Again, we can see through the map too that has been made using a proportionate sample, that Brooklyn seems to have max number of complaints being reported in January. 
+
+## For Information Purposes - CrossTab Between Borough and Status
+
+```{r crosstabsBoroughStatus, size='footnotesize'}
+statusTab<-dplyr::filter(nyc311,
+   Status=='Closed' |
+   Status=='Open' |
+   Status=='Assigned' |
+   Status=='Pending'
+)
+boroughTab<-select(statusTab,Borough, Agency, "Status")
+library(gmodels)
+CrossTable(boroughTab$Borough,boroughTab$'Status')
+```
+
+23154 of all SRs with a status 'Assigned' are from the Bronx borough.
+71077 of all SRs with a status 'Pending' are from the Brooklyn borough.
+Of all the 1038463 Unspecified location service requests, 1006460 have been closed.
+
+# PART C : Housing Units by Building Dataset
+
+## Preprocessing for Housing NY Units by Building Data
+
+We selected the Housing New York Units by Building data. The data is provided by Department of Housing Preservation and Development (HPD) and is avaliable from the NYC Open Data website (https://data.cityofnewyork.us/Housing-Development/Housing-New-York-Units-by-Building/hg8x-zxpr)
+
+```{r preprocessingHousingData}
+nycHousingData <-fread("https://data.cityofnewyork.us/api/views/hg8x-zxpr/rows.csv")
+names(nycHousingData)<-names(nycHousingData) %>%
+   stringr::str_replace_all("\\s", ".")
+nycHousingData[nycHousingData=="" | nycHousingData==" "]<-NA
+
+# making borough upper case
+nycHousingData$Borough <- toupper(nycHousingData$Borough)
+
+# filter for getting data just for 2014
+nycHousingData<- nycHousingData %>% separate(Project.Start.Date, c("Month", "Day", "Year"), sep="/")
+nycHousingData<-filter(nycHousingData, Year == "2014")
+```
+
+## Summarize Housing Data
+In this section we have grouped the housing data on the basis of postcode(zipcode) and summarized it to get sum values for Total Units which we have used later. 
+
+```{r buildingUnitsSummarize}
+buildingUnits<- nycHousingData %>%
+group_by(Postcode) %>%
+dplyr::summarise(
+     TotalUnits = sum(Total.Units)
+   )
+```
+
+## Joining 311 Calls and Housing datasets
+In this section we have joined the two datasets based on zipcodes.
+
+```{r joinBothDatasets}
+# converting df to character type
+buildingUnits$Postcode<-as.character(buildingUnits$Postcode) 
+
+# renaming field
+colnames(buildingUnits)[colnames(buildingUnits)=="Postcode"] <- "Incident.Zip"
+
+# joining
+joined_data <- nyc311 %>% inner_join(buildingUnits, by = "Incident.Zip")
+```
+
+## Filtering the joined data
+Here we have filtered the data and selected the columns we would finally want to perform analysis on.
+The second dataset chosen is from the year beginning 2014. The NYC 311 calls dataset ranges from 2010 to 2014. So we have filtered and just kept 2014.
+
+We have performed further grouping, for eg: group on zipcode and get number of noise complaints for each zipcode and then see if there is a relation with the total construction units. 
+
+```{r filterJoinedData}
+# selection
+joined_data <- select(joined_data, Agency, Complaint.Type, Descriptor, Incident.Zip, Borough, Status, Created.Date, Closed.Date, Unique.Key, TotalUnits, Latitude, Longitude)
+
+joined_data_filter_backup <- joined_data
+
+joined_data<-joined_data %>% separate(Created.Date, c("Date"), sep=" ",extra = "drop")
+joined_data<-joined_data %>% separate(Date, c("Month", "Date", "Year"), sep="/")
+joined_data<-filter(joined_data, Year == "2014")
+```
+
+## Spreading Status in Joined Data
+Here we are spreading the status column to find out the counts of each kind of status in the joined data so that we can then use it to create the grouped stacked chart in the next section
+
+```{r spreadStatus}
+joined_data$StatusCount <- rep(1, nrow(joined_data))
+joined_data$Status<-gsub("Started", "Open", joined_data$Status)
+joined_data <- joined_data %>% spread(Status, StatusCount)
+joined_data$Open[is.na(joined_data$Open)] <- 0
+joined_data$Closed[is.na(joined_data$Closed)] <- 0
+```
+
+## Grouped Stacked chart for noise complaints alongside total units
+
+In this section we have plotted the total units alongside the status of the noise complaints. This showcases that number of construction units in a zip code somewhat does affect the noise complaints reported. We stacked the status bar to display the division of open and closed cases.
+
+```{r groupStackedChartNoise}
+noise_data<-filter(joined_data, Complaint.Type == "NOISE")
+zipComplaints <- noise_data %>%
+   group_by(Incident.Zip) %>%
+   dplyr::summarise(
+      TotalUnits = mean(`TotalUnits`),
+      OpenCount = sum(Open),
+      ClosedCount = sum(Closed)
+)
+
+zipComplaints<-filter(zipComplaints,TotalUnits>400, (OpenCount + ClosedCount)>400)
+
+#Chart
+meltedZipComplaints <- melt(zipComplaints, "Incident.Zip")
+
+meltedZipComplaints$Zips <- ''
+meltedZipComplaints[meltedZipComplaints$variable == 'TotalUnits',]$Zips <- "TotalUnits"
+meltedZipComplaints[meltedZipComplaints$variable != 'TotalUnits',]$Zips <- "ComplaintCount"
+colnames(meltedZipComplaints)[colnames(meltedZipComplaints)=="variable"] <- "Legend"
+colnames(meltedZipComplaints)[colnames(meltedZipComplaints)=="value"] <- "Count"
+
+ggplot(meltedZipComplaints, aes(x = Zips, y = Count, fill = Legend)) +
+   geom_bar(stat = 'identity', position = 'stack') + facet_grid(~ Incident.Zip) +
+   geom_text(aes(label = Count), size = 2, position = position_stack(vjust = 0.5)) +
+   theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
+There seems to be a lot of open noise complaints. And DEP, the department taking care of these complaints should buck up. Let's see how quickly they are closing complaints. 
+
+## How quickly are these complaints being taken care of?
+Now that we have seen the above plot, lets look at how quickly these reported complaints are being taken care of. 
+
+```{r joinedDataFilterDurationsExpeditious}
+
+# Filtering joined data
+library(lubridate)
+joined_data_filtered <- joined_data_filter_backup %>%
+  filter(str_detect(Created.Date, "2014"), Status == "Closed", Complaint.Type == "NOISE")
+joined_data_filtered$durations<-mdy_hms(joined_data_filtered$Closed.Date)-mdy_hms(joined_data_filtered$Created.Date)
+joined_data_filtered$durations<-round(as.numeric(joined_data_filtered$durations,units='days'),2)
+
+# Categorizing durations
+joined_data_durations <- joined_data_filtered %>%
+    filter(durations>=0) %>%
+    mutate(Duration.Category = case_when(
+                                  durations<=1 ~ 'Inside One Day',
+                                  durations <= 7 ~ 'Inside One Week',
+                                  durations > 7 ~ 'More than a Week'
+                                  ))
+
+durationCategoryCounts<- joined_data_durations %>%
+  group_by(Duration.Category) %>%
+  dplyr::summarise(Count = n())
+
+# Chart
+ggplot(data=durationCategoryCounts, aes(x = Duration.Category, y = Count, fill=Duration.Category)) +
+  geom_bar(stat="identity") +
+   scale_y_continuous(labels = comma) +
+   labs(title = "Performance of DEP Agency for Noise Complaints", x = "Duration Category", y = "Number of Closed Complaints", fill = "Duration Category") +
+   geom_text(aes(label = Count), vjust = 3.0, color = "White") +
+     theme_minimal() +
+     theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+As we can see, most of the noise complaints in the zips where constructions (nyc building units) are in progress, have been resolved inside a week. There are too many open complaints though as we saw earlier.  
+
+## Grouped Stacked chart for Construction complaints and total units
+In this section we have plotted the total units alongside the status of the general construction complaints. This showcases that number of construction units in a zip code somewhat does affect the general construction complaints reported. We stacked the status bar to display the division of open and closed cases.
+
+```{r groupStackedChartConstruction}
+gc_data<-filter(joined_data, Complaint.Type == "GENERAL CONSTRUCTION")
+zipComplaints <- gc_data %>%
+   group_by(Incident.Zip) %>%
+   dplyr::summarise(
+      TotalUnits = mean(`TotalUnits`),
+      OpenCount = sum(Open),
+      ClosedCount = sum(Closed)
+)
+
+zipComplaints<-filter(zipComplaints,TotalUnits>300, (OpenCount + ClosedCount)>300)
+
+#Chart
+meltedZipComplaints <- melt(zipComplaints, "Incident.Zip")
+
+meltedZipComplaints$Zips <- ''
+meltedZipComplaints[meltedZipComplaints$variable == 'TotalUnits',]$Zips <- "TotalUnits"
+meltedZipComplaints[meltedZipComplaints$variable != 'TotalUnits',]$Zips <- "ComplaintCount"
+colnames(meltedZipComplaints)[colnames(meltedZipComplaints)=="variable"] <- "Legend"
+colnames(meltedZipComplaints)[colnames(meltedZipComplaints)=="value"] <- "Count"
+
+ggplot(meltedZipComplaints, aes(x = Zips, y = Count, fill = Legend)) +
+   geom_bar(stat = 'identity', position = 'stack') + facet_grid(~ Incident.Zip) +
+   geom_text(aes(label = Count), size = 2, position = position_stack(vjust = 0.5)) +
+   theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
+Maximum number of complaints have been closed. It will be interesting to see the rate at which these complaints are being closed. 
+
+## How quickly are these complaints being taken care of?
+Now that we have seen the above plot, lets look at how quickly these reported complaints are being taken care of. 
+
+```{r joinedDataFilterDurationsGCExpeditious}
+
+# Filtering joined data
+library(lubridate)
+joined_data_filtered <- joined_data_filter_backup %>%
+  filter(str_detect(Created.Date, "2014"), Status == "Closed", Complaint.Type == "GENERAL CONSTRUCTION")
+joined_data_filtered$durations<-mdy_hms(joined_data_filtered$Closed.Date)-mdy_hms(joined_data_filtered$Created.Date)
+joined_data_filtered$durations<-round(as.numeric(joined_data_filtered$durations,units='days'),2)
+
+# Categorizing durations
+joined_data_durations <- joined_data_filtered %>%
+    filter(durations>=0) %>%
+    mutate(Duration.Category = case_when(
+                                  durations<=1 ~ 'Inside One Day',
+                                  durations <= 7 ~ 'Inside One Week',
+                                  durations > 7 ~ 'More than a Week'
+                                  ))
+
+durationCategoryCounts<- joined_data_durations %>%
+  group_by(Duration.Category) %>%
+  dplyr::summarise(Count = n())
+
+# Chart
+ggplot(data=durationCategoryCounts, aes(x = Duration.Category, y = Count, fill=Duration.Category)) +
+  geom_bar(stat="identity") +
+   scale_y_continuous(labels = comma) +
+   labs(title = "Performance of HPD Agency for General Construction Complaints", x = "Duration Category", y = "Number of Closed Complaints", fill = "Duration Category") +
+   geom_text(aes(label = Count), vjust = 3.0, color = "White") +
+     theme_minimal() +
+     theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+As we can see, most of the general construction complaints in the zips where constructions (nyc building units) are in progress, have taken more than a week to be resolved. So the HPD agency, although has most of the complaints closed as we saw earlier, it still is not as expeditious. 
+
+# APPENDIX
+
+## PART A - Data Dictionary [NYC311]
+
+Unique Key - A key to uniquely identify each service request (SR)
+
+Created Date - Date of creation of service request (Format: MM/DD/YY HH:MM:SS AM/PM)
+
+Closed Date - Date on which the SR was closed ((Format: MM/DD/YY HH:MM:SS AM/PM))
+
+Agency - The responding City Government Agency acronym
+
+Agency Name -	Full name of the responding City Government Agency
+
+Complaint Type - Information about the topic of the incident or condition.
+
+Descriptor - Dependent on the complaint type. Contains more information on the incident or condition.
+
+Status - Status of SR submitted (Suggested values: Assigned, Cancelled, Closed, etc.)
+
+Due Date - Date when SR is supposed to be updated (Format: MM/DD/YY HH:MM:SS AM/PM)
+
+Resolution Action Updated Date - Date when responding agency last updated the SR. (Format: MM/DD/YY HH:MM:SS AM/PM)
+
+Location Type - Describes the type of location used in the address information
+
+Incident Zip - Incident location zip code, provided by geo validation.
+
+Incident Address - House number of incident address provided by submitter.
+
+Incident Code - Street Code
+
+Street Name - Street name of incident address provided by the submitter
+
+Cross Street 1 - First Cross street based on the geo validated incident location
+
+Cross Street 2 - Second Cross Street based on the geo validated incident location
+
+Intersection Street 1 - First intersecting street based on geo validated incident location
+
+Intersection Street 2 - Second intersecting street based on geo validated incident location
+
+Address Type - Type of incident location information available (Values: Address, Block face, Intersection, LatLong, Placename).
+
+City - City of the incident location provided by geo validation.
+
+Facility Type -	If available, this field describes the type of city facility associated to the SR
+
+Community Code -	Code for Borough
+
+Borough - Provided by the submitter and confirmed by geo validation.
+
+X Coordinate (State Plane) - Geo validated, X coordinate of the incident location.
+
+Y Coordinate (State Plane) - Geo validated,  Y coordinate of the incident location.
+
+Latitude - Geo based Lat of the incident location
+
+Longitude - Geo based Long of the incident location
+
+Location - Combination of the geo based lat & long of the incident location
+
+Park Facility Name - If the incident location is a Parks Dept facility, the Name of the facility will appear here 
+
+Vehicle Type - If the incident is a taxi, this field describes the type of TLC vehicle.
+
+Taxi Pick Up Location - If the incident is identified as a taxi, this field displays the taxi pick up location
+
+Bridge Highway Name - If the incident is identified as a Bridge/Highway, the name will be displayed here.
+
+Bridge Highway Direction - If the incident is identified as a Bridge/Highway, the direction where the issue took place would be displayed here.
+
+Road Ramp - If the incident location was Bridge/Highway this column differentiates if the issue was on the Road or the Ramp.
+
+Bridge Highway Segment - Additional information on the section of the Bridge/Highway were the incident took place. 
+
+## PART B - Glimpse [NYC311]
+```{r dataExtractNYC311}
+glimpse(nyc311)
+```
+
+## PART C - Data Dictionary [JOINED DATA : NYC 311_HOUSING DATA]
+
+Complaint.Type - Information about the topic of the incident or condition.
+
+Descriptor - Dependent on the complaint type. Contains more information on the incident or condition.
+
+Incident.Zip - Incident location zip code, provided by geo validation.
+
+Borough - Provided by the submitter and confirmed by geo validation.
+
+Status - Status of Service Request submitted (Suggested values: Assigned, Cancelled, Closed, etc.)
+
+Created.Date - Date of creation of service request (Format: MM/DD/YY HH:MM:SS AM/PM)
+
+Closed.Date - Date on which the SR was closed (Format: MM/DD/YY HH:MM:SS AM/PM)
+
+Unique.Key - A key to uniquely identify each service request (SR)
+
+TotalUnits - The Total Units field indicates the total number of units in each zip.
+
+Latitude - Geo based Latitude of the incident location
+
+Longitude - Geo based Longitude of the incident location
+
+## PART D - Glimpse [JOINED DATA : NYC 311_HOUSING DATA]
+```{r dataExtractJoinedData}
+glimpse(joined_data_filter_backup)
+```
+
+
+
+

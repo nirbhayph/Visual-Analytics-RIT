@@ -1,0 +1,23 @@
+1.The menu structure of Tableau changes drastically from one version to the next.Can you navigate this tutorial in the next(or previous) version of Tableau?
+
+- Yes we can navigate this tutorial in the next version of Tableau because looking at the release notes of previous tableau versions, new updated features are added to the menu for new kinds of visualizations. Hence, reiterating the same process would not be a big problem.
+
+2.Different chart types are recommended for different types of data. How would you characterize these chart types? What is it about the data that leads to the recommendations?
+
+- Different charts have different ways to visualize data. For example, if your data has multiple categories, Bar charts are effective in showing the difference between the categories or groups and show historical highs and lows at a glance. The visualization also depends on the type of data. For example, if you have historical data, showing change over time with a line chart is the most probable way to visualize it.
+
+3.Is Tableau biased in any way? Is it easier to make some kinds of arguments with Tableau than others?
+
+- No, Tableau does not seem to be biased as far as user perspective is concerned, because if you have concrete quality data, anybody can use tableau and visualize using it. It is a perfect tool for users who are not specialists or who don't have any knowledge about coding and can still go ahead and do visulizations using Tableau, at the same time it's good for people with advanced skills in data analysis as well. There are other applications too, but Tableau has a different league of its own because the application has been made user-friendly and much easy to use for any kind of data analyst. As far as other tools or languages are concerned, yes tableau does offer an easier mechanism to make some kinds of arguments.
+
+4.Tableau accepts live data and allows you to connect your visualization to live, changing data.Suppose the point you are trying to make is no longer supported by data in future. Will you be blamed for that change?
+
+- We believe that one should not be blamed for any points or projections made with respect to the future. The reason being that when you comment on the future, its a general idea of how the future would look like and not the exact one. So decisions made using those references should be in a controlled manner thinking both about the current state and the future state.
+
+5.Tableau makes a lot of default choices that you changed. Do you think it could (or should) learn your preferences overtime? What would it take to do that?
+
+- Yes, it should learn preferences over time because for a number of users, the default option requirements might change and keeping a track of such preferences would be very beneficial for an analyst. They can always have an option to reset the preferences, but keeping a track would be nice! A company called alpha AI has made some progress in this arena. You can visit https://alphaa.ai/ to know more. 
+
+6.What is a data visualization? What would have to be sub-tracted from these pictures so that they could not be called data visualizations?
+
+- Data visualization is a graphical representation of information and data. If you subtract the graphics out of it, its just tuples of data left in front of the eyes. On the other hand if we remove the information out of it, then its just a display of pretty pictures. 

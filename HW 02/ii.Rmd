@@ -1,0 +1,284 @@
+---
+title: "homework ii"
+author: "Nirbhay Pherwani, Dhiren Chandnani"
+date: '2019-12-09'
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+header-includes: \usepackage{booktabs}
+---
+
+```{r echo=FALSE}
+# This chunk is just to make it possible to shrink the typeface in succeeding chunks. Mainly this will be used for the crosstabs.
+def.chunk.hook  <- knitr::knit_hooks$get("chunk")
+knitr::knit_hooks$set(chunk = function(x, options) {
+  x <- def.chunk.hook(x, options)
+  ifelse(options$size != "normalsize", paste0("\\", options$size,"\n\n", x, "\n\n \\normalsize"), x)
+})
+```
+
+
+# Introduction
+The aim of this exploratory data analysis is to understand the NYC 311 data and observe any noticeable trends and make good predictions Each day, NYC311 receives thousands of requests related to several hundred types of non-emergency services, including noise complaints, plumbing issues, and illegally parked cars. These requests are received by NYC311 and forwarded to the relevant agencies, such as the Police, Buildings or Transportation. The agency responds to the request, addresses it and the request is then closed. 
+
+# Initialization
+Here we load the tidyverse packages and the `data.table` package and load the nyc311 data set. Then we fix the column names of the nyc311 data so that they have no spaces.
+
+```{r initialize}
+library(tidyverse)
+library(data.table)
+nyc311<-fread("311_Service_Requests_from_2010_to_Present.csv")
+names(nyc311)<-names(nyc311) %>%
+  stringr::str_replace_all("\\s", ".")
+```
+## Removing columns
+Getting rid of non-required columns
+
+```{r selection}
+nyc311 = select(nyc311, -10:-15,-17:-19,-23,-27:-49)
+```
+
+# Description
+Here we describe the data, showing both a sample and a data dictionary.
+
+## The head of the table
+Here we produce a table of just some relevant columns of data.
+
+```{r tabulate, results="asis"}
+library(xtable)
+options(xtable.comment=FALSE)
+options(xtable.booktabs=TRUE)
+narrow<-nyc311 %>%
+  select(Agency,
+Complaint.Type,
+Descriptor,
+Incident.Zip,
+Status,
+Borough)
+xtable(head(narrow))
+```
+
+## Data Dictionary
+
+Unique Key - A key to uniquely identify each service request (SR)
+
+Created Date - Date of creation of service request (Format: MM/DD/YY HH:MM:SS AM/PM)
+
+Closed Date - Date on which the SR was closed ((Format: MM/DD/YY HH:MM:SS AM/PM))
+
+Agency - The responding City Government Agency acronym
+
+Agency Name -	Full name of the responding City Government Agency
+
+Complaint Type - Information about the topic of the incident or condition.
+
+Descriptor - Dependent on the complaint type. Contains more information on the incident or condition.
+
+Status - Status of SR submitted (Suggested values: Assigned, Cancelled, Closed, etc.)
+
+Due Date - Date when SR is supposed to be updated (Format: MM/DD/YY HH:MM:SS AM/PM)
+
+Resolution Action Updated Date - Date when responding agency last updated the SR. (Format: MM/DD/YY HH:MM:SS AM/PM)
+
+Location Type - Describes the type of location used in the address information
+
+Incident Zip - Incident location zip code, provided by geo validation.
+
+Incident Address - House number of incident address provided by submitter.
+
+Street Name - Street name of incident address provided by the submitter
+
+Cross Street 1 - First Cross street based on the geo validated incident location
+
+Cross Street 2 - Second Cross Street based on the geo validated incident location
+
+Intersection Street 1 - First intersecting street based on geo validated incident location
+
+Intersection Street 2 - Second intersecting street based on geo validated incident location
+
+Address Type - Type of incident location information available (Values: Address, Block face, Intersection, LatLong, Placename).
+
+City - City of the incident location provided by geo validation.
+
+Landmark - If the incident location is identified as a Landmark the name of the landmark will display here
+
+Facility Type -	If available, this field describes the type of city facility associated to the SR
+
+Community Board -	Provided by geovalidation.
+
+Borough - Provided by the submitter and confirmed by geo validation.
+
+X Coordinate (State Plane) - Geo validated, X coordinate of the incident location.
+
+Y Coordinate (State Plane) - Geo validated,  Y coordinate of the incident location.
+
+Latitude - Geo based Lat of the incident location
+
+Longitude - Geo based Long of the incident location
+
+Location - Combination of the geo based lat & long of the incident location
+
+Park Facility Name - If the incident location is a Parks Dept facility, the Name of the facility will appear here 
+
+Park Borough - The borough of incident if it is a Parks Dept facility
+
+Vehicle Type - If the incident is a taxi, this field describes the type of TLC vehicle.
+
+Taxi Company Borough - If the incident is identified as a taxi, this field will display the borough of the taxi company.
+
+Taxi Pick Up Location - If the incident is identified as a taxi, this field displays the taxi pick up location
+
+Bridge Highway Name - If the incident is identified as a Bridge/Highway, the name will be displayed here.
+
+Bridge Highway Direction - If the incident is identified as a Bridge/Highway, the direction where the issue took place would be displayed here.
+
+Road Ramp - If the incident location was Bridge/Highway this column differentiates if the issue was on the Road or the Ramp.
+
+Bridge Highway Segment - Additional information on the section of the Bridge/Highway were the incident took place. 
+
+# Exploration
+Here we explore the columns in the data set.
+
+The following plot shows the distribution of the service requests in various agencies. It can be seen that HPD (Department of Housing Preservation and Development) receives the most service calls followed by the DOT (Department of Transportation).
+```{r explore}
+bigAgency <- narrow %>%
+  group_by(Agency) %>%
+  summarize(count=n()) %>%
+  filter(count>1000)
+bigAgency$Agency<-factor(bigAgency$Agency,
+  levels=bigAgency$Agency[order(bigAgency$count)])
+p<-ggplot(bigAgency,aes(x=Agency,y=count)) +
+   geom_bar(stat="identity") +
+   coord_flip()
+p
+```
+
+## Most common complaints
+The below graph gives us a crucial information about the common types of complaint. It shows that the highest count of complaints recieved is regarding the heating problem.
+
+```{r most_common_complaints}
+complaints <- narrow %>%
+  group_by(Complaint.Type) %>%
+  summarize(count=n()) %>%
+  filter(count>50000)
+complaints$Complaint.Type<-factor(complaints$Complaint.Type,
+  levels=complaints$Complaint.Type[order(complaints$Complaint.Type)])
+p<-ggplot(complaints,aes(x=reorder(Complaint.Type, count),y=count)) +
+   geom_bar(stat="identity") +
+   coord_flip()
+p
+```
+
+## Least common complaints
+This plot shows us the least common complaint types. The most humorous of them all is Trapping pigeon with just 1 complaint.
+
+```{r least_common_complaints}
+complaints <- narrow %>%
+  group_by(Complaint.Type) %>%
+  summarize(count=n()) %>%
+  filter(count<50)
+complaints$Complaint.Type<-factor(complaints$Complaint.Type,
+  levels=complaints$Complaint.Type[order(complaints$Complaint.Type)])
+p<-ggplot(complaints,aes(x=reorder(Complaint.Type, -count),y=count)) +
+   geom_bar(stat="identity") +
+   coord_flip()
+p
+```
+
+## Complaints by Borough
+The below graph talks about the Borough with most complaints. Brooklyn has the highest number of complaints followed by Queens.
+
+```{r borough_complaints}
+complaints <- nyc311 %>%
+  group_by(Borough) %>%
+  summarize(count=n())
+p<-ggplot(complaints,aes(x=reorder(Borough, count),y=count)) +
+   geom_bar(stat="identity") +
+   coord_flip()
+p
+```
+
+## Noise complaints
+The top three complaint types across all boroughs, Commercial, Street/Sidewalk, and Vehicle are also the top three complaint types within each borough.
+
+```{r noise_complaints}
+complaints <- nyc311 %>%
+  group_by(Complaint.Type) %>%
+  summarize(count=n()) %>%
+  filter(str_detect(Complaint.Type, "Noise"))
+p<-ggplot(complaints,aes(x=reorder(Complaint.Type, count),y=count)) +
+   geom_bar(stat="identity") +
+  coord_flip()
+p
+```
+
+## Trend of 311 calls
+This is one of the most important graphs of this analysis. It shows the trend of 311 calls across various months. As you can see, January and March are the top 2 busiest months of service request.
+
+```{r trend}
+library(lubridate)
+nyc311 %>%
+  mutate(month = month.abb[month(mdy_hms(Created.Date))]) %>%
+  filter(!is.na(month)) %>%
+  group_by(month) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  ungroup() %>%
+  mutate(month = reorder(month,Count)) %>%
+  
+    ggplot(aes(x = month,y = Count)) +
+    geom_bar(stat='identity') +
+    coord_flip()
+```
+
+Next we include a crosstabulation.
+
+## Crosstab between Borough and Complaint Type
+
+```{r crosstabs_borough_complaint, size='footnotesize'}
+xtabA<-dplyr::filter(narrow,
+  Complaint.Type=='HEATING' |
+  Complaint.Type=='GENERAL CONSTRUCTION' |
+  Complaint.Type=='PLUMBING'
+)
+xtabB<-select(xtabA,Borough,"Complaint.Type")
+library(gmodels)
+CrossTable(xtabB$Borough,xtabB$'Complaint.Type')
+```
+Of all the service requests originating from Brooklyn, the most common complaint type was of Heating.
+282916 of all SRs with complaint type 'Heating' are Unspecified.
+
+
+## Crosstab between Borough and Status
+
+```{r crosstabs_borough_status, size='footnotesize'}
+xtabA<-dplyr::filter(narrow,
+  Status=='Closed' |
+  Status=='Open' |
+  Status=='Assigned' |
+  Status=='Pending'
+)
+xtabB<-select(xtabA,Borough,"Status")
+library(gmodels)
+CrossTable(xtabB$Borough,xtabB$'Status')
+```
+23157 of all SRs with a status 'Assigned' are from the Bronx borough.
+71078 of all SRs with a status 'Pending' are from the Brooklyn borough.
+Of all the 1038485 Unspecified location service requests, 1006480 have been closed.
+
+## Crosstab between Noise complaints and Status
+
+```{r crosstabs_noise_status, size='footnotesize'}
+xtabA<-dplyr::filter(narrow,
+  Complaint.Type=='Noise - Commercial' |
+  Complaint.Type=='Noise - Vehicle'
+)
+xtabB<-select(xtabA,Complaint.Type,"Status")
+library(gmodels)
+CrossTable(xtabB$Complaint.Type,xtabB$'Status')
+```
+This crosstab is about the status of noise complaints. In previous plots, we saw that commercial and vehicular noise had the most complaints. This crosstab helps us look at the status of these complaints. Most of them look closed. Only 52 noise commercial complaints are open.
+
+# Conclusion
+After looking at the various plots, we can say that the Borough with the most complaints in Brooklyn and the most common type of complaint was regarding Heating. We also looked at the various noise complaints and observed that commercial noise had the most service request. Looking at the trend, January month had the most Service Request calls so the agencies need to be more active during that month. 

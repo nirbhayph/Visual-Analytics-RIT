@@ -1,0 +1,190 @@
+---
+title: 'homework v'
+author: 'Nirbhay Pherwani, Dhiren Chandnani'
+date: '2019-10-08'
+output:
+    pdf_document:
+    latex_engine: xelatex
+header-includes:
+  \usepackage{booktabs}
+---
+
+```{r echo=FALSE}
+# This chunk is just to make it possible to shrink the typeface in succeeding chunks. Mainly this will be used for the crosstabs.
+def.chunk.hook  <- knitr::knit_hooks$get("chunk")
+knitr::knit_hooks$set(chunk = function(x, options) {
+  x <- def.chunk.hook(x, options)
+  ifelse(options$size != "normalsize", paste0("\\", options$size,"\n\n", x, "\n\n \\normalsize"), x)
+})
+```
+
+# Preparing data for HW V
+
+## Preprocessing Steps for NYC 311 from HW IV (Explainations Omitted)
+
+```{r preprocessing_steps_from_hw4}
+library(tidyverse)
+library(data.table)
+nyc311<-fread("311_Service_Requests_from_2010_to_Present.csv")
+names(nyc311)<-names(nyc311) %>%
+  stringr::str_replace_all("\\s", ".")
+
+# removing unwanted columns
+nyc311 <- subset(nyc311, select= -c(Landmark, Park.Borough, School.City, School.State, School.Zip, Taxi.Company.Borough))
+
+# removing complaints with count < 60
+nyc311<-nyc311 %>%
+  group_by(Complaint.Type) %>%
+  filter(n() >= 60)
+
+# making complaint values uppercase
+library(dplyr)
+nyc311$Complaint.Type <- toupper(nyc311$Complaint.Type)
+nyc311$Complaint.Type <- gsub('/', ' ', nyc311$Complaint.Type)
+nyc311$Complaint.Type <- gsub('-', ' ', nyc311$Complaint.Type)
+
+# removing location types with count < 10
+nyc311<-nyc311 %>%
+  group_by(Location.Type) %>%
+  filter(n() >= 10)
+
+# removing agencies with count < 10
+nyc311<-nyc311 %>%
+  group_by(Agency) %>%
+  filter(n() >= 10)
+
+# splitting the community board field
+nyc311<-nyc311 %>% separate(Community.Board, c("Community.Code"), sep=" ", extra = "drop")
+
+# splitting incident address
+nyc311<-nyc311 %>% separate(Incident.Address, c("Incident.Code"), sep=" ",extra = "drop")
+
+# cleaning zipcodes
+library(zipcode)
+nyc311$Incident.Zip<-clean.zipcodes(nyc311$Incident.Zip)
+
+# changing case for city
+library(dplyr)
+nyc311$City <- toupper(nyc311$City)
+
+# replacing missing values with NA
+nyc311 <- nyc311 %>% mutate_all(na_if,"N/A")
+nyc311 <- nyc311 %>% mutate_all(na_if,"")
+nyc311 <- nyc311 %>% mutate_all(na_if," ")
+nyc311 <- nyc311 %>% mutate_all(na_if,"N / A")
+nyc311_backup <- nyc311
+```
+
+## Preprocessing Steps for Housing NY Units by Building Data from HW IV (Explainations Omitted)
+
+```{r preprocessing_steps_from_hw4_housing_data}
+nycHousingData <-fread("https://data.cityofnewyork.us/api/views/hg8x-zxpr/rows.csv")
+names(nycHousingData)<-names(nycHousingData) %>%
+  stringr::str_replace_all("\\s", ".")
+nycHousingData[nycHousingData=="" | nycHousingData==" "]<-NA
+
+# making borough upper case
+nycHousingData$Borough <- toupper(nycHousingData$Borough)
+```
+
+# Building Units
+
+## Spreading Reporting Construction Type 
+In this section we have spread the reporting construction type field to two different columns Preservation and New Construction to get it's presence which will later be used to find counts per zipcode for each type. 
+
+```{r spreadConstructionType}
+nycHousingData$ReportingCount <- rep(1, nrow(nycHousingData))
+nycHousingData <- nycHousingData %>% spread(Reporting.Construction.Type, ReportingCount)
+nycHousingData$Preservation[is.na(nycHousingData$Preservation)] <- 0
+nycHousingData$`New Construction`[is.na(nycHousingData$`New Construction`)] <- 0
+```
+
+## Summarize Data
+In this section we have grouped the data on the basis of postcode(zipcode) and summarized it to get sum values for a number of parameters which we will be using for our analysis in the upcoming homework assignment. 
+ 
+
+```{r buildingUnitsSummarize}
+buildingUnits<- nycHousingData %>%
+group_by(Postcode) %>%
+dplyr::summarise(
+   TotalUnits = sum(Total.Units), 
+   BR1Units = sum(`1-BR.Units`),
+   BR2Units = sum(`2-BR.Units`),
+   BR3Units = sum(`3-BR.Units`),
+   BR4Units = sum(`4-BR.Units`),
+   StudioUnits = sum(`Studio.Units`),
+   RentalUnits = sum(`Counted.Rental.Units`),
+   OwnedUnits = sum(`Counted.Homeownership.Units`),
+   PreservationUnits = sum(`Preservation`),
+   ConstructionUnits = sum(`New Construction`)
+  )
+```
+
+# Joining both datasets
+In this section we have joined the two datasets based on zipcodes.
+
+```{r joinBothDatasets}
+buildingUnits$Postcode<-as.character(buildingUnits$Postcode) # converting df to character type
+colnames(buildingUnits)[colnames(buildingUnits)=="Postcode"] <- "Incident.Zip"  # renaming field
+joined_data <- nyc311 %>% inner_join(buildingUnits, by = "Incident.Zip") # joining 
+```
+
+# Filtering the joined data
+Here we have filtered the data on the HPD type Agency as we noticed that Departement of Housing Preservation and Development (HPD) in NYC would relate more to housing based complaints and it would be interesting to perform further analysis on this data. We also selected the columns we would finally want to perform analysis on. 
+
+We will be performing further grouping, for eg: group on zipcode and get number of heating complaints for each zipcode and then see if there is a relation between the different fields we have from the second dataset.
+
+```{r filterJoinedData}
+joined_data<-filter(joined_data, Agency == "HPD")
+plyr::count(joined_data$Complaint.Type)   #displays the counts of unique complaints types
+
+# selection
+joined_data <- select(joined_data, Agency, Complaint.Type, Descriptor, Incident.Zip, Borough, Status, Created.Date, Closed.Date, Unique.Key, TotalUnits, BR1Units, BR2Units, BR3Units, BR4Units, StudioUnits, RentalUnits, OwnedUnits, PreservationUnits, ConstructionUnits, Latitude, Longitude)
+```
+
+# Data Extract
+
+```{r dataExtract}
+glimpse(joined_data)
+```
+
+# Data Dictionary
+Complaint.Type - Information about the topic of the incident or condition.
+
+Descriptor - Dependent on the complaint type. Contains more information on the incident or condition.
+
+Incident.Zip - Incident location zip code, provided by geo validation.
+
+Borough - Provided by the submitter and confirmed by geo validation.
+
+Status - Status of Service Request submitted (Suggested values: Assigned, Cancelled, Closed, etc.)
+
+Created.Date - Date of creation of service request (Format: MM/DD/YY HH:MM:SS AM/PM)
+
+Closed.Date - Date on which the SR was closed (Format: MM/DD/YY HH:MM:SS AM/PM)
+
+Unique.Key - A key to uniquely identify each service request (SR)
+
+TotalUnits - The Total Units field indicates the total number of units in each zip. 
+
+BR1Units - Total number of 1-BR units i.e units with 1-bedroom in each zip.
+
+BR2Units - Total number of 2-BR units i.e units with 2-bedroom in each zip.
+
+BR3Units - Total number of 3-BR units i.e units with 3-bedroom in each zip.
+
+BR4Units - Total number of 4-BR units i.e units with 4-bedroom in each zip.
+
+StudioUnits - Total number of Studio units in each zip.
+
+RentalUnits - Rental Units are the units in the building, counted toward the Housing New York plan, where assistance has been provided to landlords in exchange for a requirement for affordable units for each zip.
+
+OwnedUnits - Owned Units are the units in the building, counted toward the Housing New York Plan, where assistance has been provided directly to homeowners for each zip.
+
+PreservationUnits - The Preservation units field contains the number of 'Preservation' type building for each zip.
+
+ConstructionUnits - The Construction units field contains the number of 'New Construction' type building for each zip.
+
+Latitude - Geo based Latitude of the incident location
+
+Longitude - Geo based Longitude of the incident location
