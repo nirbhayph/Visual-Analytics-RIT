@@ -5,5 +5,5 @@ This repository contains coursework for the Visual Analytics course under Prof. 
 The coursework instructions and syllabus can be found here - http://mickmcquaid.com/iste782.html
 
 Authors: 
-@nirbhayph - Nirbhay Pherwani
+@nirbhayph - Nirbhay Pherwani,
 @dhirensc - Dhiren Chandnani
